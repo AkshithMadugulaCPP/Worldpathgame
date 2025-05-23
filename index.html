@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoJourney - Globe Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/globe.gl@2.32.1/dist/globe.gl.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"> <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overscroll-behavior: none; 
+        }
+        #globeViz {
+            width: 100%;
+            height: 350px; 
+            margin-bottom: 1rem;
+            border-radius: 0.5rem;
+            background-color: #1e293b; 
+            overflow: hidden; 
+            cursor: default; 
+        }
+        #globeViz.hint-mode-active {
+            cursor: crosshair; 
+        }
+        @media (min-width: 768px) { 
+            #globeViz {
+                height: 450px; 
+            }
+        }
+        .path-display::-webkit-scrollbar { height: 8px; }
+        .path-display::-webkit-scrollbar-thumb { background-color: #4a5568; border-radius: 4px; }
+        .path-display::-webkit-scrollbar-track { background-color: #edf2f7; }
+        .country-tag {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            margin: 0.25rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+        }
+        .country-tag-flag { margin-right: 0.5rem; font-size: 1.5rem; }
+        .feedback-animate-enter { opacity: 0; transform: translateY(-10px); }
+        .feedback-animate-enter-active { opacity: 1; transform: translateY(0); transition: opacity 300ms, transform 300ms; }
+        #guessInput { min-height: 44px; }
+
+        /* Removed .switch styles as toggle is removed */
+
+        .modal { position: fixed; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0.3s ease;}
+        .modal.active { opacity: 1; visibility: visible; }
+        .modal-content { 
+            background-color: #334155; 
+            padding: 1.5rem 2rem 2rem 2rem; 
+            border-radius: 0.75rem; 
+            width: 90%;
+            max-width: 550px; 
+            max-height: 90vh;
+            overflow-y: auto;
+            color: #cbd5e1; 
+            position: relative;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+        }
+        .modal-close-btn { position: absolute; top: 0.75rem; right: 1rem; background: none; border: none; font-size: 1.75rem; color: #94a3b8; cursor: pointer; }
+        .modal-close-btn:hover { color: #e2e8f0; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3b82f6; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0.5rem auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .confetti-particle {
+            position: fixed; 
+            width: 10px;
+            height: 15px; 
+            opacity: 0; 
+            z-index: 2000; 
+            pointer-events: none; 
+        }
+
+        #hintButton.hint-active {
+            background-color: #a855f7; 
+            box-shadow: 0 0 15px #a855f7;
+        }
+        .difficulty-buttons button {
+            margin: 0.25rem;
+        }
+        #infoModalBody p {
+            font-size: 1.05em; 
+            margin-bottom: 0.6rem; 
+            display: flex;
+            align-items: center;
+        }
+         #infoModalBody p strong {
+            color: #93c5fd; 
+            min-width: 180px; 
+            display: inline-block;
+        }
+        #infoModalBody .summary-icon {
+            margin-right: 0.75rem;
+            color: #60a5fa; 
+            width: 20px; 
+            text-align: center;
+        }
+
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gradient-to-br from-slate-900 to-slate-800 text-slate-100 min-h-screen flex flex-col items-center justify-center p-4 selection:bg-sky-500 selection:text-white">
+
+    <div class="bg-slate-800 shadow-2xl rounded-xl p-6 md:p-8 w-full max-w-4xl"> 
+        <header class="text-center mb-6 md:mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-sky-400">GeoJourney</h1>
+            <p class="text-slate-400 text-sm md:text-base">Guess the path between countries - Globe Edition!</p>
+        </header>
+
+        <div id="globeVizContainer">
+            <div id="globeViz"></div>
+        </div>
+
+        <div id="puzzleInfo" class="my-6 text-center space-y-3">
+            <p class="text-lg">Travel from: <strong id="startCountry" class="text-xl text-amber-400"></strong></p>
+            <p class="text-lg">To: <strong id="endCountry" class="text-xl text-amber-400"></strong></p>
+            <p id="initialDistanceInfo" class="text-slate-400 text-sm"></p>
+            <p id="guessesInfo" class="text-slate-400 text-sm"></p> 
+        </div>
+        
+        <div class="mb-4 flex flex-col sm:flex-row justify-center items-center space-y-2 sm:space-y-0 sm:space-x-4">
+            <button id="hintButton" class="bg-yellow-500 hover:bg-yellow-600 text-slate-900 font-semibold py-1 px-3 rounded-lg transition-colors duration-150 shadow-md text-sm">
+                Hint 💡 (<span id="hintsRemainingDisplay">3</span>)
+            </button>
+        </div>
+
+        <div id="gameArea" class="mb-6">
+            <div class="flex flex-col sm:flex-row gap-2 mb-4">
+                <input type="text" id="guessInput" placeholder="Enter next country..." class="flex-grow p-3 bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none text-slate-100 placeholder-slate-500">
+                <button id="guessButton" class="bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 px-5 rounded-lg transition-colors duration-150 shadow-md">Guess</button>
+            </div>
+            </div>
+
+        <div id="pathDisplayContainer" class="mb-4">
+            <h2 class="text-lg font-semibold mb-2 text-slate-300">Your Journey So Far:</h2>
+            <div id="pathDisplay" class="path-display bg-slate-700 p-3 rounded-lg min-h-[60px] flex flex-wrap items-center overflow-x-auto">
+            </div>
+        </div>
+        
+        <div id="feedbackArea" class="min-h-[70px] mb-6 text-center">
+        </div>
+
+        <div class="text-center space-y-2">
+            <div>
+                <button id="randomNewJourneyButton" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-150 shadow-md">Random Journey</button>
+                <button id="difficultyNewJourneyButton" class="ml-2 bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-150 shadow-md">New Journey (Difficulty)</button>
+            </div>
+            <div id="difficultyButtonsContainer" class="hidden difficulty-buttons flex-wrap justify-center">
+                <button data-difficulty="Easy" class="bg-green-500 hover:bg-green-600">Easy</button>
+                <button data-difficulty="Medium" class="bg-yellow-500 hover:bg-yellow-600 text-slate-900">Medium</button>
+                <button data-difficulty="Hard" class="bg-orange-500 hover:bg-orange-600">Hard</button>
+                <button data-difficulty="Extreme" class="bg-red-500 hover:bg-red-600">Extreme</button>
+            </div>
+            </div>
+    </div>
+
+    <div id="infoModal" class="modal">
+        <div class="modal-content">
+            <button id="infoModalCloseButton" class="modal-close-btn">&times;</button>
+            <h3 id="infoModalTitle" class="text-2xl font-bold mb-6 text-sky-300 text-center"></h3> 
+            <div id="infoModalBody" class="text-base leading-relaxed space-y-3"> </div>
+        </div>
+    </div>
+
+    <footer class="mt-8 text-center text-slate-500 text-sm">
+        <p>Inspired by Travle.earth. Globe powered by globe.gl. Flags are approximate.</p> </footer>
+
+    <script>
+        let countryData = {}; 
+        let countryNames = []; 
+        let startCountry = "", endCountry = "", currentCountry = ""; 
+        let guessedPath = [], gameActive = false, initialShortestDistance = 0; 
+        // travelMode variable removed, default to currentOnly behavior
+        let globe, countryPolygons = [], globeResizeObserver;
+        const GLOBE_COLORS = { 
+            start: 'rgba(236, 72, 153, 0.7)', end: 'rgba(20, 184, 166, 0.7)',   
+            visited: 'rgba(234, 179, 8, 0.7)', solvedPath: 'rgba(74, 222, 128, 0.8)', 
+            default: 'rgba(100, 116, 139, 0.5)' 
+        };
+        let hintsRemaining = 3, hintModeActive = false;
+        let maxGuesses = Infinity, guessesMade = 0, incorrectGuessesMade = 0;
+        let currentDifficulty = null; 
+
+        const DIFFICULTY_LEVELS = {
+            Easy:    { minPath: 3, maxPath: 4,  guesses: 10, name: "Easy" },    
+            Medium:  { minPath: 6, maxPath: 7,  guesses: 15, name: "Medium" },  
+            Hard:    { minPath: 9, maxPath: 11, guesses: 20, name: "Hard" },    
+            Extreme: { minPath: 14, maxPath: 19,guesses: 25, name: "Extreme" } 
+        };
+        
+        const startCountryEl = document.getElementById('startCountry'), endCountryEl = document.getElementById('endCountry'), initialDistanceInfoEl = document.getElementById('initialDistanceInfo'), guessInputEl = document.getElementById('guessInput'), guessButtonEl = document.getElementById('guessButton'), pathDisplayEl = document.getElementById('pathDisplay'), feedbackAreaEl = document.getElementById('feedbackArea'), randomNewJourneyButtonEl = document.getElementById('randomNewJourneyButton'), difficultyNewJourneyButtonEl = document.getElementById('difficultyNewJourneyButton'), difficultyButtonsContainerEl = document.getElementById('difficultyButtonsContainer'), 
+              // travelModeToggleEl, modeLabelCurrentEl, modeLabelBranchEl removed
+              globeVizEl = document.getElementById('globeViz'), 
+              // countryInsightsButtonEl, insightsCountryNameEl, journeyStoryButtonEl removed
+              infoModalEl = document.getElementById('infoModal'), 
+              infoModalCloseButtonEl = document.getElementById('infoModalCloseButton'), 
+              infoModalTitleEl = document.getElementById('infoModalTitle'), 
+              infoModalBodyEl = document.getElementById('infoModalBody'), 
+              hintButtonEl = document.getElementById('hintButton'), hintsRemainingDisplayEl = document.getElementById('hintsRemainingDisplay'), guessesInfoEl = document.getElementById('guessesInfo');
+
+        async function loadExternalCountryData() { /* ... (loadExternalCountryData remains the same) ... */ 
+            const dataUrl = 'https://raw.githubusercontent.com/mledoze/countries/master/countries.json';
+            try {
+                const response = await fetch(dataUrl);
+                if (!response.ok) throw new Error(`Failed to fetch country data: ${response.status} ${response.statusText}`);
+                const rawCountriesArray = await response.json();
+                const cca3ToCommonName = {};
+                rawCountriesArray.forEach(c => { if (c.name?.common && c.cca3) cca3ToCommonName[c.cca3] = c.name.common; });
+                const newCountryData = {};
+                for (const c of rawCountriesArray) {
+                    const commonName = c.name?.common;
+                    if (!commonName || !c.cca2) continue; 
+                    if (c.independent !== true && !['Kosovo'].includes(commonName) ) continue;
+                    newCountryData[commonName] = {
+                        borders: (c.borders || []).map(bCca3 => cca3ToCommonName[bCca3]).filter(name => name !== undefined),
+                        flag: c.flag || '🏳️', iso_a2: c.cca2, official_name: c.name?.official, cca3: c.cca3
+                    };
+                }
+                countryData = newCountryData;
+                countryNames = Object.keys(countryData).filter(name => countryData[name].borders.length > 0 || Object.values(countryData).some(cd => cd.borders.includes(name)));
+                console.log(`Loaded ${countryNames.length} countries with land borders or connections.`);
+                if (countryNames.length < 50) console.warn("Warning: Very few countries loaded.", countryData);
+            } catch (error) { console.error("Error loading external country data:", error); feedbackAreaEl.innerHTML = `<p class="text-red-400">Fatal Error: Could not load country data. Refresh. ${error.message}</p>`; guessButtonEl.disabled = true; randomNewJourneyButtonEl.disabled = true; difficultyNewJourneyButtonEl.disabled = true;}
+        }
+        function titleCase(str) { if (!str) return ""; return str.toLowerCase().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');}
+        function getShortestPathInfo(from, to) {
+            if (!countryData[from] || !countryData[to]) return { path: null, distance: Infinity };
+            if (from === to) return { path: [from], distance: 0 };
+            const q = [[from, [from]]], visited = new Set([from]);
+            while (q.length > 0) {
+                const [curr, path] = q.shift(), borders = countryData[curr]?.borders || [];
+                for (const n of borders) {
+                    if (n === to) return { path: [...path, n], distance: path.length -1 }; 
+                    if (countryData[n] && !visited.has(n)) { visited.add(n); q.push([n, [...path, n]]); }
+                }
+            } return { path: null, distance: Infinity };
+        }
+        function getNeighborsList(name, limit = 3) { if (!countryData[name]?.borders) return "unknown land neighbors"; const b = countryData[name].borders; if (b.length === 0) return "no land neighbors"; const d = b.slice(0, limit); let l = d.join(', '); if (b.length > limit) l += `, and ${b.length - limit} more`; return l;}
+        
+        function showInfoModal(title, content) { 
+            infoModalTitleEl.textContent = title;
+            infoModalBodyEl.innerHTML = content; 
+            infoModalEl.classList.add('active');
+        }
+        function hideInfoModal() { 
+            infoModalEl.classList.remove('active');
+            infoModalTitleEl.textContent = "";
+            infoModalBodyEl.innerHTML = "";
+        }
+        
+        // Gemini API functions (callGeminiAPI, fetchCountryInsights, fetchJourneyStory) and GEMINI_API_KEY removed
+
+        async function initGlobe() { /* ... (initGlobe remains largely the same) ... */
+            let responseStatusText = 'N/A', responseContentType = 'N/A';
+            try {
+                if (typeof THREE === 'undefined') throw new Error("THREE.js library not loaded.");
+                if (typeof Globe === 'undefined') throw new Error("globe.gl library not loaded.");
+                const res = await fetch('https://raw.githubusercontent.com/vasturiano/globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson');
+                responseStatusText = res.statusText; responseContentType = res.headers.get('content-type');
+                if (!res.ok) { let d = `S:${res.status},T:${res.statusText}.`; try { d += ` B:${(await res.text()).substring(0,200)}...`;} catch(e){d+=' no body.';} throw new Error(`GeoJSON fetch fail: ${d}`);}
+                const txt = await res.text();
+                if (!responseContentType?.includes('application/json')) console.warn(`GeoJSON Content-Type not JSON (is ${responseContentType}). Parsing anyway.`);
+                let data; try { data = JSON.parse(txt); } catch (e) { console.error("GeoJSON parse fail:", e, "Text:", txt.substring(0,500)); throw new Error(`GeoJSON parse fail: ${e.message}.`);}
+                if (!data?.features?.length) throw new Error("GeoJSON invalid or no features.");
+                countryPolygons = data.features;
+                
+                globe = Globe()(globeVizEl)
+                    .globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg').bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png').backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
+                    .polygonsData(countryPolygons).polygonCapColor(feat => getPolygonColor(feat)).polygonSideColor(() => 'rgba(0, 100, 0, 0.15)').polygonStrokeColor(() => '#111').polygonAltitude(0.01)
+                    .polygonLabel(feat => { 
+                        if (!hintModeActive || !gameActive) {
+                            const iso = feat.properties.ISO_A2; const startISO = getCountryISO_A2(startCountry); const endISO = getCountryISO_A2(endCountry); const visitedISOs = guessedPath.map(getCountryISO_A2);
+                            if (iso === startISO || iso === endISO || visitedISOs.includes(iso)) {
+                                for (const name in countryData) { if (countryData[name].iso_a2 === iso) return name; }
+                                return feat.properties.NAME_EN || feat.properties.ADMIN; 
+                            }
+                        }
+                        return null; 
+                    })
+                    .onPolygonHover(hD => globe.polygonAltitude(d => d===hD ? 0.03:0.01).polygonCapColor(d => d===hD ? 'rgba(200,200,200,0.8)' : getPolygonColor(d)))
+                    .onPolygonClick((polygon, event, { lat, lng, altitude }) => {
+                        if (hintModeActive && hintsRemaining > 0 && gameActive) { 
+                            const clickedCountryISO_A2 = polygon.properties.ISO_A2;
+                            let clickedCountryName = null;
+                            for (const name in countryData) { if (countryData[name].iso_a2 === clickedCountryISO_A2) { clickedCountryName = name; break; } }
+                            if (clickedCountryName) {
+                                guessInputEl.value = clickedCountryName;
+                                displayFeedback(`Hint used: Selected ${clickedCountryName}. Try guessing it!`, "info");
+                                hintsRemaining--; hintModeActive = false; updateUI(); 
+                            } else { displayFeedback("Could not identify clicked country for hint.", "warning"); hintModeActive = false; updateUI(); }
+                        }
+                    })
+                    .atmosphereColor('rgba(128,128,255,0.3)').atmosphereAltitude(0.25);
+                globe.width(globeVizEl.clientWidth).height(globeVizEl.clientHeight);
+                Object.assign(globe.controls(), {autoRotate:false, autoRotateSpeed:0.3, enableZoom:true, minDistance:120, maxDistance:1000}); 
+                if (typeof ResizeObserver !== 'undefined') {
+                    globeResizeObserver = new ResizeObserver(entries => { if (globe?.width && entries?.[0]) globe.width(entries[0].contentRect.width).height(entries[0].contentRect.height); });
+                    globeResizeObserver.observe(globeVizEl);
+                } else { console.warn("ResizeObserver not supported."); window.addEventListener('resize', () => { if (globe?.width && globeVizEl) globe.width(globeVizEl.clientWidth).height(globeVizEl.clientHeight); }); }
+                console.log("Globe initialized.");
+            } catch (error) { console.error("RAW Globe Init Error:", error); let msg = "Globe load fail. ", detail = "Unknown."; if(error){ if(error.message) detail=error.message; else if(error.name&&error.name!=='Error') detail=`Name:${error.name}${typeof error.code!=='undefined'?`,Code:${error.code}`:''}`; else if(typeof error==='string') detail=error; else{let p=[];for(const k in error)if(Object.prototype.hasOwnProperty.call(error,k))try{p.push(`${k}:${String(error[k])}`)}catch(e){p.push(`${k}:(unstringifiable)`)};let cN="N/A";if(error.constructor?.name)cN=error.constructor.name;if(p.length>0)detail=`Type:${cN}. Props:{${p.join(';')}}.`;else if(cN!=="Object"&&cN!=="N/A")detail=`Type:${cN}, no props/msg.`;else{let sE="{}";try{sE=JSON.stringify(error)||"undef"}catch(e){sE="(no stringify)"}detail=`Unidentifiable. Type:${typeof error}. Constr:${cN}. Str:${sE}.`}}}else detail="Undef/null err."; if(responseStatusText!=='N/A'&&responseStatusText!=='OK'&&!detail.includes(responseStatusText))detail+=` (Ctx: GeoJSON fetch ${responseStatusText},Type:${responseContentType})`; msg+=detail+" Check console."; globeVizEl.innerHTML=`<p class="text-red-400 p-4">${msg}</p>`;}
+        }
+        function getCountryISO_A2(name) { const d=countryData[name]; return d?.iso_a2 || null; }
+        
+        function getPolygonColor(feature) { 
+            if (!feature?.properties) return GLOBE_COLORS.default;
+            const countryISO_A2_InGeoJson = feature.properties.ISO_A2; 
+            if (!countryISO_A2_InGeoJson || countryISO_A2_InGeoJson === "-99" || countryISO_A2_InGeoJson.trim() === "") return GLOBE_COLORS.default; 
+            const startISO = getCountryISO_A2(startCountry), endISO = getCountryISO_A2(endCountry), visitedISOs = guessedPath.map(getCountryISO_A2).filter(Boolean);
+            if (!gameActive && (countryData[currentCountry]?.borders.includes(endCountry) || currentCountry === endCountry)) {
+                 if (visitedISOs.includes(countryISO_A2_InGeoJson) || countryISO_A2_InGeoJson === startISO) return GLOBE_COLORS.solvedPath;
+            }
+            if (countryISO_A2_InGeoJson === startISO) return GLOBE_COLORS.start;
+            if (countryISO_A2_InGeoJson === endISO) return GLOBE_COLORS.end;
+            if (visitedISOs.includes(countryISO_A2_InGeoJson)) return GLOBE_COLORS.visited;
+            return GLOBE_COLORS.default;
+        }
+
+        function updateGlobeHighlights() { 
+            if (globe && countryPolygons?.length > 0) { 
+                globe.polygonsData(countryPolygons).polygonCapColor(getPolygonColor) 
+                     .polygonAltitude(feat => { 
+                        if (!feat?.properties) return 0.01; const iso = feat.properties.ISO_A2; 
+                        if (!iso || iso === "-99" || iso.trim() === "") return 0.01;
+                        const startISO = getCountryISO_A2(startCountry), endISO = getCountryISO_A2(endCountry), visitedISOs = guessedPath.map(getCountryISO_A2).filter(Boolean);
+                        if (iso === startISO || iso === endISO || visitedISOs.includes(iso)) return 0.03; return 0.01;
+                     });
+                const targetName = currentCountry || startCountry;
+                const targetFeature = countryPolygons.find(f => f.properties.ISO_A2 === getCountryISO_A2(targetName)); 
+                if (targetFeature?.geometry) {
+                    let p = null;
+                    if (targetFeature.geometry.type === 'Polygon' && targetFeature.geometry.coordinates?.[0]?.[0]) p = targetFeature.geometry.coordinates[0][0];
+                    else if (targetFeature.geometry.type === 'MultiPolygon' && targetFeature.geometry.coordinates?.[0]?.[0]?.[0]) p = targetFeature.geometry.coordinates[0][0][0];
+                    if (p?.length === 2 && !isNaN(p[0]) && !isNaN(p[1])) globe.pointOfView({ lat: p[1], lng: p[0], altitude: 1.5 }, 1000); 
+                } 
+            } 
+        }
+
+        const PREDEFINED_SOLVABLE_PUZZLES = [ /* ... (predefined puzzles remain the same) ... */ ];
+
+        function startGame(difficulty = null) { 
+            gameActive = true; guessedPath = []; feedbackAreaEl.innerHTML = ""; guessInputEl.value = "";
+            guessInputEl.disabled = false; guessButtonEl.disabled = false;
+            // countryInsightsButtonEl.classList.add('hidden'); // AI feature removed
+            // journeyStoryButtonEl.classList.add('hidden'); // AI feature removed
+            hintsRemaining = 3; hintModeActive = false;
+            guessesMade = 0; incorrectGuessesMade = 0;
+            currentDifficulty = difficulty ? DIFFICULTY_LEVELS[difficulty] : null;
+            maxGuesses = currentDifficulty ? currentDifficulty.guesses : Infinity;
+            difficultyButtonsContainerEl.classList.add('hidden'); 
+            updateUI(); 
+            
+            if (countryNames.length === 0) { displayFeedback("Country data loading. Please wait or refresh.", "error"); return; }
+
+            let pathInfo = { path: null }, attempts = 0; const maxAttempts = 500; 
+            let minP = currentDifficulty ? currentDifficulty.minPath : 2;
+            let maxP = currentDifficulty ? currentDifficulty.maxPath : 12;
+
+            while (attempts < maxAttempts) { 
+                let tempStartCountry = countryNames[Math.floor(Math.random() * countryNames.length)];
+                let tempEndCountry = countryNames[Math.floor(Math.random() * countryNames.length)];
+                if (tempStartCountry !== tempEndCountry && countryData[tempStartCountry] && countryData[tempEndCountry]) {
+                    pathInfo = getShortestPathInfo(tempStartCountry, tempEndCountry);
+                    if (pathInfo.path && pathInfo.distance >= minP && pathInfo.distance <= maxP) { 
+                        startCountry = tempStartCountry; endCountry = tempEndCountry; break; 
+                    }
+                } attempts++;
+            }
+            if (!pathInfo.path || pathInfo.distance < minP || pathInfo.distance > maxP) { 
+                console.warn(`Puzzle generation for ${difficulty || 'random'} failed or unsuitable. Fallback.`);
+                const fallback = PREDEFINED_SOLVABLE_PUZZLES[Math.floor(Math.random() * PREDEFINED_SOLVABLE_PUZZLES.length)];
+                startCountry = fallback.start; endCountry = fallback.end; pathInfo = getShortestPathInfo(startCountry, endCountry);
+                if (!pathInfo.path) { console.error("Absolute fallback fail."); startCountry = "Portugal"; endCountry = "Germany"; pathInfo = getShortestPathInfo(startCountry, endCountry);
+                     if (!pathInfo.path) { displayFeedback("Critical error: No puzzle. Check console.", "error"); return;}
+                }
+                initialShortestDistance = pathInfo.path ? (pathInfo.path.length -1) : 0;
+                if (!currentDifficulty) maxGuesses = Math.max(10, initialShortestDistance + 5); 
+            }
+            currentCountry = startCountry; guessedPath.push(startCountry); 
+            initialShortestDistance = pathInfo.path ? (pathInfo.path.length - 1) : 0; 
+            if (currentDifficulty) {
+                 displayFeedback(`Difficulty: ${currentDifficulty.name}. Journey: ${startCountry} to ${endCountry}. Good luck!`, 'info');
+            } else {
+                displayFeedback(`Random Journey: ${startCountry} to ${endCountry}. Good luck!`, 'info');
+            }
+            updateUI(); 
+            initialDistanceInfoEl.textContent = `(Shortest: ${initialShortestDistance} countries)`;
+            updateGlobeHighlights();
+        }
+
+        function handleGuess() { 
+            if (!gameActive) return; 
+            guessesMade++; 
+            updateUI(); 
+
+            const raw = guessInputEl.value.trim();
+            const guessLowercase = raw.toLowerCase(); let matchedCountryKey = null;
+            for (const key in countryData) { if (key.toLowerCase() === guessLowercase) { matchedCountryKey = key; break; } }
+            guessInputEl.value = ""; 
+            // countryInsightsButtonEl.classList.add('hidden'); // AI feature removed
+            
+            if (!matchedCountryKey) { 
+                displayFeedback(`"${raw}" not recognized. Check spelling.`, "error"); 
+                incorrectGuessesMade++;
+                if (guessesMade >= maxGuesses && maxGuesses !== Infinity) endGameLost();
+                return; 
+            }
+            const guess = matchedCountryKey; 
+            if (guessedPath.includes(guess)) { 
+                displayFeedback(`Visited ${guess}.`, "warning"); 
+                if (guessesMade >= maxGuesses && maxGuesses !== Infinity) endGameLost();
+                return; 
+            }
+            
+            // Travel mode is now always 'currentOnly'
+            if (countryData[currentCountry]?.borders.includes(guess)) { 
+                // Valid move
+            } else { 
+                displayFeedback(`${guess} does not share a land border with ${currentCountry}.`, "error"); 
+                incorrectGuessesMade++; 
+                if (guessesMade >= maxGuesses && maxGuesses !== Infinity) endGameLost(); 
+                return; 
+            }
+            
+            guessedPath.push(guess); currentCountry = guess; 
+
+            if (countryData[currentCountry]?.borders.includes(endCountry)) {
+                gameActive = false; guessInputEl.disabled = true; guessButtonEl.disabled = true;
+                displayFeedback(`🎉 You found a neighbor of ${endCountry}! Journey complete!`, "win");
+                triggerConfetti(); 
+                // journeyStoryButtonEl.classList.remove('hidden'); // AI feature removed
+                // countryInsightsButtonEl.classList.add('hidden'); // AI feature removed
+                updateUI(); updateGlobeHighlights(); 
+                showGameSummaryModal(true); 
+                return;
+            }
+
+            const remPath = getShortestPathInfo(currentCountry, endCountry);
+            if (!remPath.path) {
+                guessedPath.pop(); currentCountry = guessedPath[guessedPath.length-1]; 
+                displayFeedback(`${guess} is a valid border, but it's a dead end for ${endCountry}. Try another route!`, "error"); 
+                incorrectGuessesMade++;
+                updateUI(); updateGlobeHighlights(); 
+                if (guessesMade >= maxGuesses && maxGuesses !== Infinity) endGameLost();
+                return;
+            }
+            // insightsCountryNameEl.textContent = currentCountry; // AI feature removed
+            // countryInsightsButtonEl.classList.remove('hidden'); // AI feature removed
+            const distanceVal = remPath.path ? remPath.path.length -1 : "unknown"; 
+            let fbMsg = `Correct! Now in ${currentCountry}. ${distanceVal} more countries to ${endCountry}.`;
+            // Branched logic removed as travelMode is fixed
+            displayFeedback(fbMsg, "success"); updateUI(); updateGlobeHighlights();
+            if (guessesMade >= maxGuesses && maxGuesses !== Infinity) endGameLost();
+        }
+
+        function endGameLost() {
+            gameActive = false;
+            guessInputEl.disabled = true;
+            guessButtonEl.disabled = true;
+            displayFeedback(`😢 Out of guesses! The destination was ${endCountry}. Better luck next time!`, "error");
+            updateGlobeHighlights(); 
+            showGameSummaryModal(false); 
+        }
+
+        function showGameSummaryModal(isWin) {
+            const title = isWin ? "🎉 Journey Complete! 🎉" : "Game Over";
+            let summaryHtml = `
+                <p><span class="summary-icon"><i class="fas fa-flag-usa"></i></span><strong>Start Country:</strong> ${startCountryEl.textContent}</p>
+                <p><span class="summary-icon"><i class="fas fa-flag-checkered"></i></span><strong>End Country:</strong> ${endCountryEl.textContent}</p>
+                <p><span class="summary-icon"><i class="fas fa-route"></i></span><strong>Your Path Length:</strong> ${guessedPath.length - 1} steps</p>
+                <p><span class="summary-icon"><i class="fas fa-map-signs"></i></span><strong>Shortest Possible Path:</strong> ${initialShortestDistance} steps</p>
+                <p><span class="summary-icon"><i class="fas fa-keyboard"></i></span><strong>Total Guesses Made:</strong> ${guessesMade}</p>
+                <p><span class="summary-icon"><i class="fas fa-times-circle"></i></span><strong>Incorrect Guesses:</strong> ${incorrectGuessesMade}</p>
+                <p><span class="summary-icon"><i class="fas fa-lightbulb"></i></span><strong>Hints Used:</strong> ${3 - hintsRemaining}</p>
+            `;
+            if (currentDifficulty) {
+                summaryHtml += `<p><span class="summary-icon"><i class="fas fa-tachometer-alt"></i></span><strong>Difficulty:</strong> ${currentDifficulty.name}</p>`;
+                summaryHtml += `<p><span class="summary-icon"><i class="fas fa-bullseye"></i></span><strong>Max Guesses Allowed:</strong> ${maxGuesses}</p>`;
+            } else {
+                summaryHtml += `<p><span class="summary-icon"><i class="fas fa-dice"></i></span><strong>Difficulty:</strong> Random</p>`;
+            }
+            // Journey story button logic removed
+            showInfoModal(title, summaryHtml);
+        }
+        
+        function updateUI() { 
+            startCountryEl.innerHTML = `${countryData[startCountry]?.flag || '🏳️'} ${startCountry}`; endCountryEl.innerHTML = `${countryData[endCountry]?.flag || '🏳️'} ${endCountry}`;
+            pathDisplayEl.innerHTML = ""; guessedPath.forEach((name, idx) => {
+                const div = document.createElement('div'); div.className = 'country-tag bg-slate-600 text-slate-100';
+                const flag = document.createElement('span'); flag.className = 'country-tag-flag'; flag.textContent = countryData[name]?.flag || '🏳️'; div.appendChild(flag);
+                const text = document.createElement('span'); text.textContent = name; div.appendChild(text); pathDisplayEl.appendChild(div);
+                if (idx < guessedPath.length - 1) { const arr = document.createElement('span'); arr.className = 'text-slate-400 mx-1 text-xl'; arr.textContent = '→'; pathDisplayEl.appendChild(arr); }
+            }); pathDisplayEl.scrollLeft = pathDisplayEl.scrollWidth;
+            
+            hintsRemainingDisplayEl.textContent = hintsRemaining;
+            hintButtonEl.disabled = hintsRemaining === 0 || !gameActive; 
+            globeVizEl.classList.toggle('hint-mode-active', hintModeActive && gameActive); 
+            hintButtonEl.classList.toggle('hint-active', hintModeActive && gameActive);
+
+            if (maxGuesses === Infinity) {
+                guessesInfoEl.textContent = `Guesses made: ${guessesMade}`;
+            } else {
+                guessesInfoEl.textContent = `Guesses: ${guessesMade} / ${maxGuesses}`;
+            }
+
+            if (!gameActive && (countryData[currentCountry]?.borders.includes(endCountry) || currentCountry === endCountry) ) { 
+                initialDistanceInfoEl.textContent = `Journey Complete! Steps: ${guessedPath.length - 1}.`;
+            } else if (gameActive) { const distInfo = getShortestPathInfo(currentCountry, endCountry);
+                const distanceVal = distInfo.path ? distInfo.path.length -1 : "an unknown number of";
+                if (currentCountry === startCountry) initialDistanceInfoEl.textContent = `(Shortest: ${initialShortestDistance} countries)`;
+                else if (distInfo.path) initialDistanceInfoEl.textContent = `(Shortest from ${currentCountry}: ${distanceVal} countries)`;
+                else initialDistanceInfoEl.textContent = `Exploring... No direct land path from ${currentCountry} to ${endCountry}.`;
+            }
+            // Travel mode UI update removed
+        }
+        function displayFeedback(msg, type="info") { 
+            feedbackAreaEl.innerHTML=''; const p=document.createElement('p'); p.innerHTML=msg; 
+            let tc="text-slate-300"; if(type==="success")tc="text-green-400";else if(type==="error")tc="text-red-400";else if(type==="warning")tc="text-yellow-400";else if(type==="win")tc="text-emerald-400 font-semibold";
+            p.className=`${tc} text-sm md:text-base feedback-animate-enter`; feedbackAreaEl.appendChild(p); requestAnimationFrame(()=>p.classList.add('feedback-animate-enter-active'));
+        }
+
+        function triggerConfetti() { /* ... (triggerConfetti remains the same) ... */
+            const confettiContainer = document.body; const confettiCount = 150; const colors = ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4', '#009688', '#4caf50', '#8bc34a', '#cddc39', '#ffeb3b', '#ffc107', '#ff9800', '#ff5722']; const { clientWidth, clientHeight } = document.documentElement; 
+            for (let i = 0; i < confettiCount; i++) { const particle = document.createElement('div'); particle.classList.add('confetti-particle'); const startX = window.innerWidth / 2; const startY = window.innerHeight / 2; particle.style.left = startX + 'px'; particle.style.top = startY + 'px'; particle.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)]; const angle = Math.random() * Math.PI * 2; const velocity = Math.random() * 250 + 100; const fallDuration = 2 + Math.random() * 2; const endX = Math.cos(angle) * velocity; const endY = Math.sin(angle) * velocity - (Math.random() * 100); const animationName = `burst-particle-${i}`; const keyframes = `@keyframes ${animationName} {0% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 1; } 50% { opacity: 1; } 100% { transform: translate(${endX}px, ${endY + 200}px) rotate(${Math.random() * 720}deg) scale(0.5); opacity: 0; } }`; let styleSheet = document.getElementById('confetti-styles'); if (!styleSheet) { styleSheet = document.createElement('style'); styleSheet.id = 'confetti-styles'; document.head.appendChild(styleSheet); } try { if (styleSheet.sheet.cssRules.length < 1000) { styleSheet.sheet.insertRule(keyframes, styleSheet.sheet.cssRules.length); } } catch(e) { console.warn("Could not insert confetti keyframe rule:", e); } particle.style.animation = `${animationName} ${fallDuration}s cubic-bezier(0.175, 0.885, 0.320, 1.275) forwards`; confettiContainer.appendChild(particle); setTimeout(() => { particle.remove(); }, fallDuration * 1000 + 500); }
+        }
+
+
+        hintButtonEl.addEventListener('click', () => {
+            if (!gameActive) { displayFeedback("Start a new game to use hints.", "warning"); return; }
+            if (hintsRemaining > 0 && !hintModeActive) { hintModeActive = true; displayFeedback("Hint Mode: Click a country on the globe!", "info"); updateUI(); 
+            } else if (hintModeActive) { hintModeActive = false; displayFeedback("Hint mode deactivated.", "info"); updateUI();
+            } else if (hintsRemaining <= 0) { displayFeedback("No hints remaining for this game.", "warning");}
+        });
+
+        randomNewJourneyButtonEl.addEventListener('click', () => startGame(null)); 
+        difficultyNewJourneyButtonEl.addEventListener('click', () => {
+            difficultyButtonsContainerEl.classList.toggle('hidden');
+        });
+
+        difficultyButtonsContainerEl.querySelectorAll('button').forEach(button => {
+            button.addEventListener('click', (e) => {
+                const difficulty = e.target.dataset.difficulty;
+                startGame(difficulty);
+            });
+        });
+
+
+        guessButtonEl.addEventListener('click', handleGuess); guessInputEl.addEventListener('keypress', (e)=>{if(e.key==='Enter')handleGuess();});
+        // travelModeToggleEl event listener removed
+        // countryInsightsButtonEl event listener removed
+        // journeyStoryButtonEl event listener removed
+        infoModalCloseButtonEl.addEventListener('click',hideInfoModal); 
+        infoModalEl.addEventListener('click',(e)=>{if(e.target===infoModalEl)hideInfoModal();}); 
+        
+        window.onload = async () => { 
+            displayFeedback("Loading country data...", "info");
+            await loadExternalCountryData(); 
+            if (countryNames.length > 0) { 
+                await initGlobe(); 
+                startGame(null); 
+                updateUI(); 
+            } else {
+                console.error("Game initialization halted: country data loading failure.");
+            }
+        }
+    </script>
+</body>
+</html>
